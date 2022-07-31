@@ -1198,16 +1198,20 @@ Status DBImpl::Delete(const WriteOptions& options, const Slice& key) {
 }
 
 Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
+  // Writer 是一个包装 condition 的 class
   Writer w(&mutex_);
   w.batch = updates;
   w.sync = options.sync;
   w.done = false;
 
+  // 并发写通过 writer 队列进行写合并优化
   MutexLock l(&mutex_);
   writers_.push_back(&w);
+  // 等待获取写锁或者此次写入操作被合并
   while (!w.done && &w != writers_.front()) {
     w.cv.Wait();
   }
+  // 此次写操作被其他 writer 合并了
   if (w.done) {
     return w.status;
   }
@@ -1217,6 +1221,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   uint64_t last_sequence = versions_->LastSequence();
   Writer* last_writer = &w;
   if (status.ok() && updates != nullptr) {  // nullptr batch is for compactions
+    // 合并写操作
     WriteBatch* write_batch = BuildBatchGroup(&last_writer);
     WriteBatchInternal::SetSequence(write_batch, last_sequence + 1);
     last_sequence += WriteBatchInternal::Count(write_batch);
@@ -1254,7 +1259,10 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   while (true) {
     Writer* ready = writers_.front();
     writers_.pop_front();
+    // 若没有合并写操作, &w 是最开始 front 的 writer, 否则是合并写
+    // 操作 writer 中的最后一个
     if (ready != &w) {
+      // 其他 writer 的写操作被合并了, 设置 done = true 并通知
       ready->status = status;
       ready->done = true;
       ready->cv.Signal();
@@ -1467,6 +1475,10 @@ void DBImpl::GetApproximateSizes(const Range* range, int n, uint64_t* sizes) {
 // Default implementations of convenience methods that subclasses of DB
 // can call if they wish
 Status DB::Put(const WriteOptions& opt, const Slice& key, const Slice& value) {
+  // 创建一个batch实例作为一个数据库操作的最小执行单元, batch 中每一条数据编码为
+  // ┌────────┬─────────────┬───────┬───────────────┬───────┐
+  // │  type  │ key length  │  key  │ value length  │ value │
+  // └────────┴─────────────┴───────┴───────────────┴───────┘
   WriteBatch batch;
   batch.Put(key, value);
   return Write(opt, &batch);
