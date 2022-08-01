@@ -1116,6 +1116,8 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
                    std::string* value) {
   Status s;
   MutexLock l(&mutex_);
+  // 快照读，如果 WriteOptions 提供了要读取的快照, 则读取指定快照版本的数据
+  // 否则, 使用最新的快照版本, 即 LastSequqence 得到的.
   SequenceNumber snapshot;
   if (options.snapshot != nullptr) {
     snapshot =
@@ -1136,8 +1138,12 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
 
   // Unlock while reading from files and memtables
   {
-    mutex_.Unlock();
+    mutex_.Unlock(); // 基于快照读的读是可以并发的, 这里 unlock 了
     // First look in the memtable, then in the immutable memtable (if any).
+	// 1. 在memory db中查找指定的key，若搜索到符合条件的数据项，结束查找
+	// 2. 在冻结的memory db (imm) 中查找指定的key，若搜索到符合条件的数据项，结束查找
+	// 3. 按低层至高层的顺序在level i层的sstable文件中查找指定的key，若搜索到符合条件的数据项，结束查找，
+	//	  否则返回Not Found错误，表示数据库中不存在指定的数据
     LookupKey lkey(key, snapshot);
     if (mem->Get(lkey, value, &s)) {
       // Done
@@ -1147,7 +1153,7 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
       s = current->Get(options, lkey, value, &stats);
       have_stat_update = true;
     }
-    mutex_.Lock();
+    mutex_.Lock(); // 快照读完成, 修改全局状态, 继续持有锁
   }
 
   if (have_stat_update && current->UpdateStats(stats)) {

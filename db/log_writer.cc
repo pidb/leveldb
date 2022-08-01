@@ -31,6 +31,8 @@ Writer::Writer(WritableFile* dest, uint64_t dest_length)
 
 Writer::~Writer() = default;
 
+// AddRecord 接收 WriterBatchInternal 的 contents (slice), 
+// 将 key/value 编码后写入到日志.
 Status Writer::AddRecord(const Slice& slice) {
   const char* ptr = slice.data();
   size_t left = slice.size();
@@ -43,6 +45,8 @@ Status Writer::AddRecord(const Slice& slice) {
   do {
     const int leftover = kBlockSize - block_offset_;
     assert(leftover >= 0);
+	// 当前的 block 不能写入一个完整的 log header (7bytes),
+	// 则将当前 block 填充 \x00..., 然后再下一个 block 写入
     if (leftover < kHeaderSize) {
       // Switch to a new block
       if (leftover > 0) {
@@ -50,19 +54,30 @@ Status Writer::AddRecord(const Slice& slice) {
         static_assert(kHeaderSize == 7, "");
         dest_->Append(Slice("\x00\x00\x00\x00\x00\x00", leftover));
       }
+	  // 填充后, 重置下一个 block 的偏移
       block_offset_ = 0;
     }
 
     // Invariant: we never leave < kHeaderSize bytes in a block.
     assert(kBlockSize - block_offset_ - kHeaderSize >= 0);
 
+	// avail 是当前 block 剩余可以写入的空间
+	// 每个 block 固定的大小 - 当前 block 剩余的空间 - 固定的 block header 大小
     const size_t avail = kBlockSize - block_offset_ - kHeaderSize;
+	// left 是 batch 编码的内容的大小, fragment_length 若可以完整的写入 left, 则
+	// 取 left, 否则取 avail block 实际剩余的空间
     const size_t fragment_length = (left < avail) ? left : avail;
 
     RecordType type;
+	// end 为 true 表示 left 可以完整的写入到当前 block, 
+	// false 则相反.
     const bool end = (left == fragment_length);
+	// 当前 block 一次性写完 type = kFullType, 否则
+	// 1. 如果 begin = true, 说明 block 第一次写入
+	// 2. 如果当前 block 写了一部分数据, 下一个 block 可以写完, type = kLastType
+	// 3. 如果跨越多个 block 才能写完, 中间的 block  type = kMiddleType
     if (begin && end) {
-      type = kFullType;
+      type = kFullType; // 一次完整的写入
     } else if (begin) {
       type = kFirstType;
     } else if (end) {
