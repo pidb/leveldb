@@ -81,6 +81,9 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   //  tag          : uint64((sequence << 8) | type)
   //  value_size   : varint32 of value.size()
   //  value bytes  : char[value.size()]
+  // 
+  // 1. 计算 memtable 中插入的元素要分配的内存, 使用单独的 arena 内存分配器进行分配
+  //
   size_t key_size = key.size();
   size_t val_size = value.size();
   size_t internal_key_size = key_size + 8;
@@ -88,6 +91,10 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
                              internal_key_size + VarintLength(val_size) +
                              val_size;
   char* buf = arena_.Allocate(encoded_len);
+  //
+  // 2. 编码 key 和 value
+  // > Note: key 的编码和 LookupKey 一致, 所以代码重复了.
+  //
   char* p = EncodeVarint32(buf, internal_key_size);
   std::memcpy(p, key.data(), key_size);
   p += key_size;
@@ -96,11 +103,20 @@ void MemTable::Add(SequenceNumber s, ValueType type, const Slice& key,
   p = EncodeVarint32(p, val_size);
   std::memcpy(p, value.data(), val_size);
   assert(p + val_size == buf + encoded_len);
+  // 3. 将 buf 整体插入到 skiplist 作为一个 entry
   table_.Insert(buf);
 }
 
 bool MemTable::Get(const LookupKey& key, std::string* value, Status* s) {
   Slice memkey = key.memtable_key();
+  // 
+  // leveldb中, 每一次写操作都有一个sequence number,标志着写入操作的先后顺序
+  // 由于在leveldb中, 可能会有多条相同key的数据项同时存储在数据库中, 因此
+  // 需要有一个序列号来标识这些数据项的新旧情况, 序列号最大的数据项为最新值.
+  //
+  // 在 skiplist 中找到第一个大于等于 memkey 的 entry
+  // Seek 会跳过大于 key 的序列号, 只查找小于等于 key 序列号的 entry
+  //
   Table::Iterator iter(&table_);
   iter.Seek(memkey.data());
   if (iter.Valid()) {

@@ -1246,6 +1246,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
           sync_error = true;
         }
       }
+	  // 写入 memtable
       if (status.ok()) {
         status = WriteBatchInternal::InsertInto(write_batch, mem_);
       }

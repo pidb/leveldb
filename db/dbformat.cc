@@ -51,6 +51,9 @@ int InternalKeyComparator::Compare(const Slice& akey, const Slice& bkey) const {
   //    decreasing type (though sequence# should be enough to disambiguate)
   int r = user_comparator_->Compare(ExtractUserKey(akey), ExtractUserKey(bkey));
   if (r == 0) {
+    // 默认的比较规则：
+    // 首先按照字典序比较用户定义的key（ukey），若用户定义key值大，整个internalKey就大；
+    // 若用户定义的key相同，则序列号大的internalKey值就小；
     const uint64_t anum = DecodeFixed64(akey.data() + akey.size() - 8);
     const uint64_t bnum = DecodeFixed64(bkey.data() + bkey.size() - 8);
     if (anum > bnum) {
@@ -118,16 +121,21 @@ LookupKey::LookupKey(const Slice& user_key, SequenceNumber s) {
   size_t usize = user_key.size();
   size_t needed = usize + 13;  // A conservative estimate
   char* dst;
+  // space_ 是预分配的 200 字节内存, 防止小 key 频繁分配内存, 
+  // 每个 LookupKey 构造时都会预先分配
   if (needed <= sizeof(space_)) {
     dst = space_;
   } else {
     dst = new char[needed];
   }
   start_ = dst;
+  // 编码 LookupKey 的长度
   dst = EncodeVarint32(dst, usize + 8);
   kstart_ = dst;
+  // 编码 user_key 数据
   std::memcpy(dst, user_key.data(), usize);
   dst += usize;
+  // 编码 sequence number 和 type
   EncodeFixed64(dst, PackSequenceAndType(s, kValueTypeForSeek));
   dst += 8;
   end_ = dst;

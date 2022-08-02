@@ -130,6 +130,7 @@ class MemTableInserter : public WriteBatch::Handler {
 }  // namespace
 
 Status WriteBatchInternal::InsertInto(const WriteBatch* b, MemTable* memtable) {
+  // 创建 MemTableInserter 辅助 class 作为迭代 batch 的handler
   MemTableInserter inserter;
   inserter.sequence_ = WriteBatchInternal::Sequence(b);
   inserter.mem_ = memtable;
