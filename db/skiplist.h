@@ -179,8 +179,9 @@ struct SkipList<Key, Comparator>::Node {
 template <typename Key, class Comparator>
 typename SkipList<Key, Comparator>::Node* SkipList<Key, Comparator>::NewNode(
     const Key& key, int height) {
-  // sizeof(Node) 大小是 typename Key 的大小 + std::atomic<Node*> next_[1] 的大小
-  // node_memory 内存是 Node 大小 + 当前 height 的大小, 这部分内存由 Node 的 next_ 使用.
+  // sizeof(Node) 大小是 typename Key 的大小 + std::atomic<Node*> next_[1]
+  // 的大小 node_memory 内存是 Node 大小 + 当前 height 的大小, 这部分内存由 Node
+  // 的 next_ 使用.
   char* const node_memory = arena_->AllocateAligned(
       sizeof(Node) + sizeof(std::atomic<Node*>) * (height - 1));
   return new (node_memory) Node(key);
@@ -337,7 +338,7 @@ template <typename Key, class Comparator>
 void SkipList<Key, Comparator>::Insert(const Key& key) {
   // TODO(opt): We can use a barrier-free variant of FindGreaterOrEqual()
   // here since Insert() is externally synchronized.
-  
+
   // 写是单 writer 的, 所以说在外部同步
   Node* prev[kMaxHeight];
   Node* x = FindGreaterOrEqual(key, prev);
@@ -360,23 +361,39 @@ void SkipList<Key, Comparator>::Insert(const Key& key) {
 
     //
     // 理解 relaxed 内存次序对多线程的影响.
-    // leveldb 中, 写是单个 writer, 读是并发且无锁的,且**写不会阻塞读**, 当插入时 skiplist level 增长
-    // 时, 需要思考并发问题.
-    // leveldb 中使用 atomic 存储 skiplist 的高度, 当发生增长时, 使用的内存次序是 relaxed,
-    // 根据标准, relaxed 对于当前线程, 后续的操作都会看到 store, 对于其他线程没有这个保证, 可能看到
-    // 旧 height, 也可能看到 store 之后的新 height, 具体是哪种情况取决于 CPU 何时同步缓存.
-    // 
+    // leveldb 中, 写是单个 writer, 读是并发且无锁的,且**写不会阻塞读**,
+    // 当插入时 skiplist level 增长 时, 需要思考并发问题. leveldb 中使用 atomic
+    // 存储 skiplist 的高度, 当发生增长时, 使用的内存次序是 relaxed, 根据标准,
+    // relaxed 对于当前线程, 后续的操作都会看到 store, 对于其他线程没有这个保证,
+    // 可能看到 旧 height, 也可能看到 store 之后的新 height,
+    // 具体是哪种情况取决于 CPU 何时同步缓存.
+    //
+    // leveldb 中的 next 获取释放序列
+    //		- 对于读操作, 获取 next 的指针使用的是 acquire
+    //		- 对于写操作, 存储 next 的指针使用的是 store
+    //		- 获取释放序列在CPU之间构成同步关系, acquire 可以看到 release
+    //之前的所有写入
+    //
     // 并发安全分析
     // 分为两种情况 1) reader 看到新的 height, 以及 2) reader 没有看到新的高度
-    //    1) reader 看到新的 height, 如果是在 for 循环之后, 那么他能看到新的 node, 
-    //       根据 relaxed 内存次序可知 **读操作一定发生在写操作之后**, 所以读写满足顺序一致性. 
-    //       如果发生在 for 循环之前, 那么情况和 2) 一致, 如果发生在 for 循环中间, 那么一种情况是看到新的 node, 
-    //       则这种情况和前面讨论的一致, 否则情况和 2) 一致.
+    //    1) reader 看到新的 height, 如果它看到新的 height 层的指针,
+    //    那么也一层能看到 [height, 0] 对应设置的新节点的指针,
+    //       因为  for 循环是从0 ~ height, 而读是从 height ~ 0, next
+    //       指针构成获取释放序列, 最新的 height 完成 release 之后, 表示之前的 0
+    //       ~ height 也release 了, 根据获取释放序列的定义, 就一定能看到最新
+    //       height 之前的指针.
     //
-    //    2) reader 没有看到新的 height, 如果读操作发生在写操作之前, 那么是满足顺序一致性的. 但如果读操作在写操作之后 
-    //       情况有些微妙, 因为 GetMaxHeight 也使用的 relaxed 内存次序, 不能保证写入的 height 立即被看到.
+    //		 如果看不到最新 height 层的指针 (但看到了 height, 这种情况说明 for
+    //循环还没有更新完 height 然后 release), 		 那么根据 skiplist 的定义, 从 height
+    //读取时会读到空指针, 然后跳到下一层.
     //
-    // 综上, 可以得出结论, 读写 skiplist 单线程满足顺序一致性, 多线程不保证顺序一致性.
+    //    2) reader 没有看到新的 height, 由于 next 的获取释放序列,
+    //    在整个读过程中看不到最新读 height, 则读一定发生在写之前,
+    //		 因为只要读的过程中 next 构造了获取释放序列,
+    //则一定能看到最新的height.
+    //
+    // 综上, 可以得出结论, 读写 skiplist 单线程满足顺序一致性, 多线程也通过
+    // acquire/release 也满足顺序一致性.
     //
     max_height_.store(height, std::memory_order_relaxed);
   }
