@@ -236,27 +236,34 @@ void DBImpl::RemoveObsoleteFiles() {
   versions_->AddLiveFiles(&live);
 
   std::vector<std::string> filenames;
+  // GetChildren 是虚函数, 获取 dbname_ 下的所有文件.
   env_->GetChildren(dbname_, &filenames);  // Ignoring errors on purpose
   uint64_t number;
   FileType type;
   std::vector<std::string> files_to_delete;
   for (std::string& filename : filenames) {
+    // ParseFileName 根据不同的文件名称后缀解析出 type.
+    // number 只有当文件是 manifest 和 sst/ldb 时才有效.
     if (ParseFileName(filename, &number, &type)) {
       bool keep = true;
       switch (type) {
         case kLogFile:
+          // wal 无效, 一般保留当前和前一个 wal, 如果不是在删除
           keep = ((number >= versions_->LogNumber()) ||
                   (number == versions_->PrevLogNumber()));
           break;
         case kDescriptorFile:
           // Keep my manifest file, and any newer incarnations'
           // (in case there is a race that allows other incarnations)
+          // 如果当前的 number小于说明是一个无效的 manifest, 因为新的 manifest 还没有创建。
           keep = (number >= versions_->ManifestFileNumber());
           break;
         case kTableFile:
+          // 生成的 table 文件, 还没有记录到 manifest, 因此需要保持.
           keep = (live.find(number) != live.end());
           break;
         case kTempFile:
+          // 同 TableFile
           // Any temp files that are currently being written to must
           // be recorded in pending_outputs_, which is inserted into "live"
           keep = (live.find(number) != live.end());
@@ -551,6 +558,8 @@ void DBImpl::CompactMemTable() {
   assert(imm_ != nullptr);
 
   // Save the contents of the memtable as a new Table
+  // 根据当前版本号, 创建一个新的 sstable, 将 immutable memtable
+  // 内的数据写入到 sstable.
   VersionEdit edit;
   Version* base = versions_->current();
   base->Ref();
