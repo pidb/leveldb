@@ -1219,13 +1219,15 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   w.sync = options.sync;
   w.done = false;
 
-  // 并发写通过 writer 队列进行写合并优化
+  /* 获取 lock */
   MutexLock l(&mutex_);
-  writers_.push_back(&w);
-  // 等待获取写锁或者此次写入操作被合并
+  writers_.push_back(&w); // 将写操作加入写队列
   while (!w.done && &w != writers_.front()) {
+    // 等待获取写锁或者此次写入操作被合并
+    // Note. 需要注意这里上面已经获取锁了
     w.cv.Wait();
   }
+
   // 此次写操作被其他 writer 合并了
   if (w.done) {
     return w.status;
@@ -1238,6 +1240,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   if (status.ok() && updates != nullptr) {  // nullptr batch is for compactions
     // 合并写操作
     WriteBatch* write_batch = BuildBatchGroup(&last_writer);
+    // 为此次写入分配序列号
     WriteBatchInternal::SetSequence(write_batch, last_sequence + 1);
     last_sequence += WriteBatchInternal::Count(write_batch);
 
@@ -1247,6 +1250,8 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     // into mem_.
     {
       mutex_.Unlock();
+      /* 释放 lock */
+      // Note. 这里开始其他线程可以进入到 Write 方法了
       status = log_->AddRecord(WriteBatchInternal::Contents(write_batch));
       bool sync_error = false;
       if (status.ok() && options.sync) {
@@ -1267,27 +1272,32 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
         RecordBackgroundError(status);
       }
     }
+    // write_batch 内容已经安全的写入到 log 和 memtable了, 请空 tmp_batch_, 因为 write_batch 指向它.
     if (write_batch == tmp_batch_) tmp_batch_->Clear();
 
     versions_->SetLastSequence(last_sequence);
   }
 
+  // 遍历写操作队列, 在合并写时通过 last_writer 指针指向此次合并的写队列的最后一个元素
   while (true) {
+    // 从队列取出 `[front, last_writer]` 操作对象
     Writer* ready = writers_.front();
     writers_.pop_front();
-    // 若没有合并写操作, &w 是最开始 front 的 writer, 否则是合并写
-    // 操作 writer 中的最后一个
+    // w 指向 last_writer
     if (ready != &w) {
-      // 其他 writer 的写操作被合并了, 设置 done = true 并通知
+      // 设置状态完成, 并发送 Signal 通知等待的线程写操作被当前线程合并了
       ready->status = status;
       ready->done = true;
       ready->cv.Signal();
     }
+    // 遍历结束
     if (ready == last_writer) break;
   }
 
-  // Notify new head of write queue
+  // 如果队列不为空 (合并写期间其他线程排队了写操作), 则通知
+  // 等待在写队列 front 上的条件变量的线程可以继续执行写操作
   if (!writers_.empty()) {
+    // 这个通知的 front 实际上是 `[front, last_writer]` 的范围后一个元素
     writers_.front()->cv.Signal();
   }
 
@@ -1316,9 +1326,12 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
   *last_writer = first;
   std::deque<Writer*>::iterator iter = writers_.begin();
   ++iter;  // Advance past "first"
+  // 第一个和写队列中后续的写操作合并
   for (; iter != writers_.end(); ++iter) {
     Writer* w = *iter;
     if (w->sync && !first->sync) {
+      // batch 在一起的写操作要么都是 sync 的, 要么是非 sync 的.
+      // 不允许出现 sync 不同的写操作合并在一起, 如果出现则不在继续合并.
       // Do not include a sync write into a batch handled by a non-sync write.
       break;
     }
@@ -1326,19 +1339,25 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
     if (w->batch != nullptr) {
       size += WriteBatchInternal::ByteSize(w->batch);
       if (size > max_size) {
+        // 如果合并写入大小超过前面计算的 max_size, 则不在继续合并.
         // Do not make batch too big
         break;
       }
 
       // Append to *result
+      // 合并写操作
       if (result == first->batch) {
+        // 当与第一个写操作合并的时候, 先使用 db_impl 内部的一个临时 batch 对象承接
+        // 合并, 这样可以避免调用者传递的 Writebatch 对象被污染.
         // Switch to temporary batch instead of disturbing caller's batch
         result = tmp_batch_;
         assert(WriteBatchInternal::Count(result) == 0);
         WriteBatchInternal::Append(result, first->batch);
       }
+      // 合并后续的写操作
       WriteBatchInternal::Append(result, w->batch);
     }
+    // 此时 last_writer 指向合并写队列操作的最后一个对象
     *last_writer = w;
   }
   return result;

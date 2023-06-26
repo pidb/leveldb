@@ -98,8 +98,8 @@ void WriteBatchInternal::SetSequence(WriteBatch* b, SequenceNumber seq) {
 void WriteBatch::Put(const Slice& key, const Slice& value) {
   WriteBatchInternal::SetCount(this, WriteBatchInternal::Count(this) + 1);
   rep_.push_back(static_cast<char>(kTypeValue));
-  PutLengthPrefixedSlice(&rep_, key);
-  PutLengthPrefixedSlice(&rep_, value);
+  PutLengthPrefixedSlice(&rep_, key); // 编码 key: data | len
+  PutLengthPrefixedSlice(&rep_, value); // 编码 value: data | len
 }
 
 void WriteBatch::Delete(const Slice& key) {
