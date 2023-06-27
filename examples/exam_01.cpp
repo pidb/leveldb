@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
   }
 
   // 写入 10 个 key/value
-  for (int i = 1; i <= 10; ++i) {
+  for (int i = 1; i <= 100000; ++i) {
     std::string key = "key" + std::to_string(i);
     std::string value = "value" + std::to_string(i);
     status = db->Put(leveldb::WriteOptions(), key, value);
@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
   }
 
   // 读取 10 个 key/value
-  for (int i = 1; i <= 10; ++i) {
+  for (int i = 1; i <= 20; ++i) {
     std::string key = "key" + std::to_string(i);
     std::string value;
     status = db->Get(leveldb::ReadOptions(), key, &value);

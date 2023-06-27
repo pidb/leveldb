@@ -7,6 +7,7 @@
 #include <cstdio>
 
 #include "leveldb/env.h"
+
 #include "util/coding.h"
 #include "util/crc32c.h"
 
@@ -30,13 +31,13 @@ Reader::Reader(SequentialFile* file, Reporter* reporter, bool checksum,
 
 Reader::~Reader() { delete[] backing_store_; }
 
-// 
+//
 // SkipToInitialBlock 跳过 block 中initial_offset_ 大小的数据,
 // 如果跳过之后, block 大小只剩余小于等于 6 bytes 的数据, 也要跳过, 即
 // offset_in_block > kBlockSize - 6.
-// 
+//
 // Note 在正式代码中, initial_offset_ 初始化恒为0, 目前仅在测试代码中使用.
-// 
+//
 bool Reader::SkipToInitialBlock() {
   const size_t offset_in_block = initial_offset_ % kBlockSize;
   uint64_t block_start_location = initial_offset_ - offset_in_block;
@@ -69,12 +70,16 @@ bool Reader::ReadRecord(Slice* record, std::string* scratch) {
 
   scratch->clear();
   record->clear();
-  // 由于一个日志可能跨越多个 block, ReadPhysicalRecord 只能每次读取一个 block, 所以使用 in_fragmented_record 控制读取 block 过程中的状态
+  // 由于一个日志可能跨越多个 block, ReadPhysicalRecord 只能每次读取一个 block,
+  // 所以使用 in_fragmented_record 控制读取 block 过程中的状态
   // 1. 初始为 false
-  // 2. 如果读的 block 类型为 first, 设置为 true, 如果调用 ReadPhysicalRecord 再次读取到类型
+  // 2. 如果读的 block 类型为 first, 设置为 true, 如果调用 ReadPhysicalRecord
+  // 再次读取到类型
   //	为 first 且 in_fragmented_record 为 true, 则说明读取错误.
-  // 3. 如果读的 block 类型为 middle, 那么 in_fragmented_record 必须为 true, 否则出现读取错误
-  // 4. 如果读的 block 类型为 last, 那么 in_fragmented_record 必须为 true, 否则出现读取错误
+  // 3. 如果读的 block 类型为 middle, 那么 in_fragmented_record 必须为 true,
+  // 否则出现读取错误
+  // 4. 如果读的 block 类型为 last, 那么 in_fragmented_record 必须为 true,
+  // 否则出现读取错误
   bool in_fragmented_record = false;
   // Record offset of the logical record that we're reading
   // 0 is a dummy value to make compilers happy
@@ -90,14 +95,15 @@ bool Reader::ReadRecord(Slice* record, std::string* scratch) {
     uint64_t physical_record_offset =
         end_of_buffer_offset_ - buffer_.size() - kHeaderSize - fragment.size();
 
-	// 控制跳过读取的中间记录, 一般由于 writer 
-	// 跨 block 多次写入时, 主要时 middle 类型, 首次遇到 last 类型
-	// 时代表已经跳过了一个中间数据.
-	//
-	// 跳过writer 
-	// Note 目前由于 initial_offset_ 初始化都为0, 所以 resyncing_ 恒为 false,
-	// 只在测试代码中使用.
-	//
+    // 控制跳过读取的中间记录, 一般由于 writer
+    // 跨 block 多次写入时, 主要时 middle 类型, 首次遇到 last 类型
+    // 时代表已经跳过了一个中间数据.
+    //
+    // 跳过writer
+    // Note 目前由于 initial_offset_ 初始化都为0, 所以 resyncing_ 恒为 false,
+    // 只在测试代码中使用.
+    //
+    // middle 类型需要读取完, 直到遇到 last 类型结束, 一条 record 读取完毕.
     if (resyncing_) {
       if (record_type == kMiddleType) {
         continue;
@@ -211,12 +217,13 @@ unsigned int Reader::ReadPhysicalRecord(Slice* result) {
   while (true) {
     if (buffer_.size() < kHeaderSize) {
       if (!eof_) {
+        // 日志文件没有达到 eof
         // Last read was a full read, so this is a trailer to skip
         buffer_.clear();
-		// 顺序读 kBlockSize ( 32kib) 大小
+        // 顺序读 kBlockSize ( 32kib) 大小
         Status status = file_->Read(kBlockSize, &buffer_, backing_store_);
         end_of_buffer_offset_ += buffer_.size();
-		// 读文件异常处理
+        // 读文件异常处理
         if (!status.ok()) {
           buffer_.clear();
           ReportDrop(kBlockSize, status);
@@ -279,8 +286,8 @@ unsigned int Reader::ReadPhysicalRecord(Slice* result) {
       }
     }
 
-	// remove_prefix 的作用是从 buffer 中删去当前读取的日志记录, 
-	// 这样下一次开始时如果 buffer 不为空可以继续从 buffer 读取.
+    // remove_prefix 的作用是从 buffer 中删去当前读取的日志记录,
+    // 这样下一次开始时如果 buffer 不为空可以继续从 buffer 读取.
     buffer_.remove_prefix(kHeaderSize + length);
 
     // Skip physical record that started before initial_offset_

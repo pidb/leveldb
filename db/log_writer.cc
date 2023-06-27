@@ -41,6 +41,8 @@ Status Writer::AddRecord(const Slice& slice) {
   // is empty, we still want to iterate once to emit a single
   // zero-length record
   Status s;
+  // begine 用于记录 record 是否可以一次在一个 block (32kb) 中写入完成, 如果
+  // 不能, 在下一次循环中 begin 将置为 false.
   bool begin = true;
   do {
     const int leftover = kBlockSize - block_offset_;

@@ -276,6 +276,10 @@ class PosixMmapReadableFile final : public RandomAccessFile {
 
 class PosixWritableFile final : public WritableFile {
  public:
+  
+  /// @brief 构造函数
+  /// @param filename 文件名
+  /// @param fd 文件描述符
   PosixWritableFile(std::string filename, int fd)
       : pos_(0),
         fd_(fd),
@@ -283,6 +287,7 @@ class PosixWritableFile final : public WritableFile {
         filename_(std::move(filename)),
         dirname_(Dirname(filename_)) {}
 
+  /// @brief 析构函数在对象销毁时被调用，关闭文件描述符（如果打开的话）。
   ~PosixWritableFile() override {
     if (fd_ >= 0) {
       // Ignoring any potential errors
@@ -290,10 +295,14 @@ class PosixWritableFile final : public WritableFile {
     }
   }
 
+  /// @brief 用于向文件中追加数据。
+  /// @param data 要追加的数据
+  /// @return 返回写操作的状态。
   Status Append(const Slice& data) override {
     size_t write_size = data.size();
     const char* write_data = data.data();
 
+    // 首先，将数据尽可能多地拷贝到内部缓冲区buf_中。
     // Fit as much as possible into buffer.
     size_t copy_size = std::min(write_size, kWritableFileBufferSize - pos_);
     std::memcpy(buf_ + pos_, write_data, copy_size);
@@ -305,12 +314,14 @@ class PosixWritableFile final : public WritableFile {
     }
 
     // Can't fit in buffer, so need to do at least one write.
+    // 如果缓冲区满了，就将缓冲区中的数据写入文件，并清空缓冲区。
     Status status = FlushBuffer();
     if (!status.ok()) {
       return status;
     }
-
+    
     // Small writes go to buffer, large writes are written directly.
+    // 如果数据无法完全放入缓冲区，就直接将剩余的数据写入文件。返回写操作的状态。
     if (write_size < kWritableFileBufferSize) {
       std::memcpy(buf_, write_data, write_size);
       pos_ = write_size;
@@ -319,34 +330,46 @@ class PosixWritableFile final : public WritableFile {
     return WriteUnbuffered(write_data, write_size);
   }
 
+  /// @brief 关闭文件
+  /// @return 返回对应的Status
   Status Close() override {
+    // 在关闭之前先调用FlushBuffer方法将缓冲区中的数据写入文件。
     Status status = FlushBuffer();
     const int close_result = ::close(fd_);
     if (close_result < 0 && status.ok()) {
+      // 如果关闭文件时发生错误，将返回对应的Status。
       status = PosixError(filename_, errno);
     }
     fd_ = -1;
     return status;
   }
 
+  /// @brief 将缓冲区中的数据写入文件，并清空缓冲区
+  /// @return 返回写操作的状态
   Status Flush() override { return FlushBuffer(); }
 
+  /// @brief 保证文件系统中的新文件在刷新到磁盘之前是可用的.
+  /// @return 返回同步操作的状态
   Status Sync() override {
     // Ensure new files referred to by the manifest are in the filesystem.
     //
     // This needs to happen before the manifest file is flushed to disk, to
     // avoid crashing in a state where the manifest refers to files that are not
     // yet on disk.
+    // 调用SyncDirIfManifest方法，确保在将 manifest 类型文件刷新到磁盘之前，
+    // 新文件已经存在于文件系统中。
     Status status = SyncDirIfManifest();
     if (!status.ok()) {
       return status;
     }
-
+  
+    // 调用FlushBuffer方法将缓冲区中的数据写入文件，并清空缓冲区。
     status = FlushBuffer();
     if (!status.ok()) {
       return status;
     }
 
+    // 调用SyncFd方法同步文件描述符所对应的文件。
     return SyncFd(fd_, filename_);
   }
 
@@ -357,6 +380,10 @@ class PosixWritableFile final : public WritableFile {
     return status;
   }
 
+  /// @brief 将指定大小的数据写入文件。
+  /// @param data 数据字节
+  /// @param size 数据大小
+  /// @return 如果写入时发生错误，将返回对应的 Status
   Status WriteUnbuffered(const char* data, size_t size) {
     while (size > 0) {
       ssize_t write_result = ::write(fd_, data, size);
@@ -372,6 +399,8 @@ class PosixWritableFile final : public WritableFile {
     return Status::OK();
   }
 
+  /// @brief 用于如果是 manifest 类型文件, 确保所引用的新文件已经存在于文件系统中
+  /// @return 如果打开目录或同步目录时发生错误，将返回对应的 Status
   Status SyncDirIfManifest() {
     Status status;
     if (!is_manifest_) {
@@ -394,6 +423,11 @@ class PosixWritableFile final : public WritableFile {
   //
   // The path argument is only used to populate the description string in the
   // returned Status if an error occurs.
+
+  /// @brief 确保与给定文件描述符相关联的所有缓存都刷新到持久介质，并且可以经受住断电等情况.
+  /// @param fd dirname_ 对应的 fd
+  /// @param fd_path dirname_
+  /// @return 返回同步操作的 Status.
   static Status SyncFd(int fd, const std::string& fd_path) {
 #if HAVE_FULLFSYNC
     // On macOS and iOS, fsync() doesn't guarantee durability past power
