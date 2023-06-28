@@ -1058,11 +1058,19 @@ void VersionSet::MarkFileNumberUsed(uint64_t number) {
   }
 }
 
+// 每一次compaction都会消除若干 level 层的旧文件，新增 level+1 层的新文件，
+// 因此触发进行合并的条件状态可能也发生了变化。故在leveldb中，使用了计分牌来维护
+// 每一层文件的文件个数及数据总量信息，来挑选出下一个需要进行合并的层数。
 void VersionSet::Finalize(Version* v) {
   // Precomputed best level for next compaction
   int best_level = -1;
   double best_score = -1;
 
+  // 遍历所有 level 的文件
+  // 计分的规则：
+  // 1. 对于0层文件，该层的分数为文件总数／4；
+  // 2. 对于非0层文件，该层的分数为文件数据总量／数据总量上限；
+  // 将得分最高的层数记录，若该得分超过1，则为下一次进行合并的层数；
   for (int level = 0; level < config::kNumLevels - 1; level++) {
     double score;
     if (level == 0) {
@@ -1296,6 +1304,7 @@ Compaction* VersionSet::PickCompaction() {
     // Pick the first file that comes after compact_pointer_[level]
     for (size_t i = 0; i < current_->files_[level].size(); i++) {
       FileMetaData* f = current_->files_[level][i];
+      // 上次进行compation的下一个文件 或者 第一个文件 加入compation列表
       if (compact_pointer_[level].empty() ||
           icmp_.Compare(f->largest.Encode(), compact_pointer_[level]) > 0) {
         c->inputs_[0].push_back(f);
