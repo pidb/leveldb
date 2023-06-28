@@ -4,16 +4,17 @@
 
 #include "db/version_set.h"
 
-#include <algorithm>
-#include <cstdio>
-
 #include "db/filename.h"
 #include "db/log_reader.h"
 #include "db/log_writer.h"
 #include "db/memtable.h"
 #include "db/table_cache.h"
+#include <algorithm>
+#include <cstdio>
+
 #include "leveldb/env.h"
 #include "leveldb/table_builder.h"
+
 #include "table/merger.h"
 #include "table/two_level_iterator.h"
 #include "util/coding.h"
@@ -467,19 +468,30 @@ bool Version::OverlapInLevel(int level, const Slice* smallest_user_key,
                                smallest_user_key, largest_user_key);
 }
 
-/// @brief 为新的 level 0 的 sstable 选择合适的 level. 根据读效率进行权衡, 如果 level 0
-///        存在重叠则选择 level 0, 否则继续对 level1, 2 优化，知道所有的 level 遍历结束.
-/// @param smallest_user_key 
-/// @param largest_user_key 
-/// @return 
+/// @brief 为新的 level 0 的 sstable 选择合适的 level. 根据读效率进行权衡, 如果
+/// level 0
+///        存在重叠则选择 level 0, 否则继续对 level1, 2 优化，知道所有的 level
+///        遍历结束.
+/// @param smallest_user_key
+/// @param largest_user_key
+/// @return
+
+// 该实现的思想为
+// 1. 如果 $L_0$ 重叠, 则选择 $L_0$, 因此 $L_0$ 允许多个重叠的 sstable
+// 2. 如果 $L_1$ 重叠, 则选择 $L_1$
+// 3. 关键是如果 $L_0, L_1$ 都不重叠, 对于顺序写入的 workloads 很普遍,
+// 那么大量的 sstable 将输出在 $L_2$, 为了避免 $L_2$ sstable 文件过多, leveldb
+// 实现会计算 $L_2$ 的 sstable 大小, 当到达一定阈值时, 则选择 $L_1$.
 int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
                                         const Slice& largest_user_key) {
   int level = 0;
   // 如果新的 sstable 和 level 0 的文件重叠, 选择 level 0.
-  // N.B: 因为允许 level 0 重叠，所以如果 level 0 sstable 文件数量过多，会影响度效率，不过
-  // major compaction 可以控制 level 0， sstable 文件数量，不会无限制的增长下去
+  // N.B: 因为允许 level 0 重叠，所以如果 level 0 sstable
+  // 文件数量过多，会影响度效率，不过 major compaction 可以控制 level 0，
+  // sstable 文件数量，不会无限制的增长下去
   //
-  // 如果没有重叠，将 sstable 推到更高的 level 以提高读效率，减少某个 level 文件数量过多。
+  // 如果没有重叠，将 sstable 推到更高的 level 以提高读效率，减少某个 level
+  // 文件数量过多。
   if (!OverlapInLevel(0, &smallest_user_key, &largest_user_key)) {
     // Push to next level if there is no overlap in next level,
     // and the #bytes overlapping in the level after that are limited.
@@ -492,7 +504,7 @@ int Version::PickLevelForMemTableOutput(const Slice& smallest_user_key,
         break;
       }
       // 否则, 计算 level 2 重叠文件, 并计算重叠文件的 size 总和是否超过阈值,
-      // 如果超过, 则选择 level 0. 
+      // 如果超过, 则选择 level 0.
       if (level + 2 < config::kNumLevels) {
         // Check that file does not overlap too many grandparent bytes.
         GetOverlappingInputs(level + 2, &start, &limit, &overlaps);

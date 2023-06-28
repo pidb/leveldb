@@ -4,14 +4,6 @@
 
 #include "db/db_impl.h"
 
-#include <algorithm>
-#include <atomic>
-#include <cstdint>
-#include <cstdio>
-#include <set>
-#include <string>
-#include <vector>
-
 #include "db/builder.h"
 #include "db/db_iter.h"
 #include "db/dbformat.h"
@@ -22,11 +14,20 @@
 #include "db/table_cache.h"
 #include "db/version_set.h"
 #include "db/write_batch_internal.h"
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <cstdio>
+#include <set>
+#include <string>
+#include <vector>
+
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/status.h"
 #include "leveldb/table.h"
 #include "leveldb/table_builder.h"
+
 #include "port/port.h"
 #include "table/block.h"
 #include "table/merger.h"
@@ -255,7 +256,8 @@ void DBImpl::RemoveObsoleteFiles() {
         case kDescriptorFile:
           // Keep my manifest file, and any newer incarnations'
           // (in case there is a race that allows other incarnations)
-          // 如果当前的 number小于说明是一个无效的 manifest, 因为新的 manifest 还没有创建。
+          // 如果当前的 number小于说明是一个无效的 manifest, 因为新的 manifest
+          // 还没有创建。
           keep = (number >= versions_->ManifestFileNumber());
           break;
         case kTableFile:
@@ -515,7 +517,8 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
   const uint64_t start_micros = env_->NowMicros();
   FileMetaData meta;
   meta.number = versions_->NewFileNumber();
-  pending_outputs_.insert(meta.number);
+  pending_outputs_.insert(
+      meta.number);  // 在 DBImpl 中记录等待写出的 sstable 文件
   Iterator* iter = mem->NewIterator();
   Log(options_.info_log, "Level-0 table #%llu: started",
       (unsigned long long)meta.number);
@@ -531,7 +534,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
       (unsigned long long)meta.number, (unsigned long long)meta.file_size,
       s.ToString().c_str());
   delete iter;
-  pending_outputs_.erase(meta.number);
+  pending_outputs_.erase(meta.number);  // sstable 以及写出, 删除
 
   // Note that if file_size is zero, the file has been deleted and
   // should not be added to the manifest.
@@ -542,6 +545,7 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit,
     if (base != nullptr) {
       level = base->PickLevelForMemTableOutput(min_user_key, max_user_key);
     }
+    // 记录新增的 sstable
     edit->AddFile(level, meta.number, meta.file_size, meta.smallest,
                   meta.largest);
   }
@@ -1147,12 +1151,14 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
 
   // Unlock while reading from files and memtables
   {
-    mutex_.Unlock(); // 基于快照读的读是可以并发的, 这里 unlock 了
+    mutex_.Unlock();  // 基于快照读的读是可以并发的, 这里 unlock 了
     // First look in the memtable, then in the immutable memtable (if any).
-	// 1. 在memory db中查找指定的key，若搜索到符合条件的数据项，结束查找
-	// 2. 在冻结的memory db (imm) 中查找指定的key，若搜索到符合条件的数据项，结束查找
-	// 3. 按低层至高层的顺序在level i层的sstable文件中查找指定的key，若搜索到符合条件的数据项，结束查找，
-	//	  否则返回Not Found错误，表示数据库中不存在指定的数据
+    // 1. 在memory db中查找指定的key，若搜索到符合条件的数据项，结束查找
+    // 2. 在冻结的memory db (imm)
+    // 中查找指定的key，若搜索到符合条件的数据项，结束查找
+    // 3. 按低层至高层的顺序在level
+    // i层的sstable文件中查找指定的key，若搜索到符合条件的数据项，结束查找，
+    //	  否则返回Not Found错误，表示数据库中不存在指定的数据
     LookupKey lkey(key, snapshot);
     if (mem->Get(lkey, value, &s)) {
       // Done
@@ -1162,7 +1168,7 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key,
       s = current->Get(options, lkey, value, &stats);
       have_stat_update = true;
     }
-    mutex_.Lock(); // 快照读完成, 修改全局状态, 继续持有锁
+    mutex_.Lock();  // 快照读完成, 修改全局状态, 继续持有锁
   }
 
   if (have_stat_update && current->UpdateStats(stats)) {
@@ -1221,7 +1227,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
 
   /* 获取 lock */
   MutexLock l(&mutex_);
-  writers_.push_back(&w); // 将写操作加入写队列
+  writers_.push_back(&w);  // 将写操作加入写队列
   while (!w.done && &w != writers_.front()) {
     // 等待获取写锁或者此次写入操作被合并
     // Note. 需要注意这里上面已经获取锁了
@@ -1260,7 +1266,7 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
           sync_error = true;
         }
       }
-	  // 写入 memtable
+      // 写入 memtable
       if (status.ok()) {
         status = WriteBatchInternal::InsertInto(write_batch, mem_);
       }
@@ -1272,13 +1278,15 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
         RecordBackgroundError(status);
       }
     }
-    // write_batch 内容已经安全的写入到 log 和 memtable了, 请空 tmp_batch_, 因为 write_batch 指向它.
+    // write_batch 内容已经安全的写入到 log 和 memtable了, 请空 tmp_batch_, 因为
+    // write_batch 指向它.
     if (write_batch == tmp_batch_) tmp_batch_->Clear();
 
     versions_->SetLastSequence(last_sequence);
   }
 
-  // 遍历写操作队列, 在合并写时通过 last_writer 指针指向此次合并的写队列的最后一个元素
+  // 遍历写操作队列, 在合并写时通过 last_writer
+  // 指针指向此次合并的写队列的最后一个元素
   while (true) {
     // 从队列取出 `[front, last_writer]` 操作对象
     Writer* ready = writers_.front();
@@ -1347,9 +1355,9 @@ WriteBatch* DBImpl::BuildBatchGroup(Writer** last_writer) {
       // Append to *result
       // 合并写操作
       if (result == first->batch) {
-        // 当与第一个写操作合并的时候, 先使用 db_impl 内部的一个临时 batch 对象承接
-        // 合并, 这样可以避免调用者传递的 Writebatch 对象被污染.
-        // Switch to temporary batch instead of disturbing caller's batch
+        // 当与第一个写操作合并的时候, 先使用 db_impl 内部的一个临时 batch
+        // 对象承接 合并, 这样可以避免调用者传递的 Writebatch 对象被污染. Switch
+        // to temporary batch instead of disturbing caller's batch
         result = tmp_batch_;
         assert(WriteBatchInternal::Count(result) == 0);
         WriteBatchInternal::Append(result, first->batch);

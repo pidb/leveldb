@@ -8,6 +8,7 @@
 #include "db/filename.h"
 #include "db/table_cache.h"
 #include "db/version_edit.h"
+
 #include "leveldb/db.h"
 #include "leveldb/env.h"
 #include "leveldb/iterator.h"
@@ -29,6 +30,7 @@ Status BuildTable(const std::string& dbname, Env* env, const Options& options,
     }
 
     TableBuilder* builder = new TableBuilder(options, file);
+    // 在 sstable meta 对象中记录最小的 key
     meta->smallest.DecodeFrom(iter->key());
     Slice key;
     for (; iter->Valid(); iter->Next()) {
