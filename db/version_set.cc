@@ -1275,6 +1275,16 @@ Iterator* VersionSet::MakeInputIterator(Compaction* c) {
         }
       } else {
         // Create concatenating iterator for the files from this level
+
+        // create a TwoLevelIterator for each
+        // level-0 file, if any; create a TwoLevelIterator for concatenating all
+        // input files in the same level other than level-0. the former
+        // TwoLevelIterator consists of two Block::Iter instances, the one for
+        // the index block, the other for the data block. the latter
+        // TwoLevelIterator consists of one Version::LevelFileNumIterator
+        // instance for walking through file numbers and one TwoLevelIterator
+        // instance for accessing the SSTable specified by an certain file
+        // number.
         list[num++] = NewTwoLevelIterator(
             new Version::LevelFileNumIterator(icmp_, &c->inputs_[which]),
             &GetFileIterator, table_cache_, options);
@@ -1296,26 +1306,34 @@ Compaction* VersionSet::PickCompaction() {
   const bool size_compaction = (current_->compaction_score_ >= 1);
   const bool seek_compaction = (current_->file_to_compact_ != nullptr);
   if (size_compaction) {
+    // case1. size_compaction 选择 sstable
     level = current_->compaction_level_;
     assert(level >= 0);
     assert(level + 1 < config::kNumLevels);
+    // 初始化 compaction, 其中 options_ 是 db options
     c = new Compaction(options_, level);
 
-    // Pick the first file that comes after compact_pointer_[level]
+    // 从 level 中选择一个起始 sstable 文件作为 level_ 的输入.
     for (size_t i = 0; i < current_->files_[level].size(); i++) {
+      // step 1. 选择一个大于上次合并 key 的 sstable, 或者从未合并过
+      // (compact_pointer_[level] 为空) 则选择 level_ 中的第一个文件
       FileMetaData* f = current_->files_[level][i];
-      // 上次进行compation的下一个文件 或者 第一个文件 加入compation列表
       if (compact_pointer_[level].empty() ||
           icmp_.Compare(f->largest.Encode(), compact_pointer_[level]) > 0) {
         c->inputs_[0].push_back(f);
         break;
       }
     }
+
+    // step2. 没有找到大于上次合并的 sstable (level 的所有 sstable
+    // 文件都小于上一次合并的 key), 选择 level 中第一个 sstable 文件.
     if (c->inputs_[0].empty()) {
-      // Wrap-around to the beginning of the key space
+      // Wrap-around to the
+      // beginning of the key space
       c->inputs_[0].push_back(current_->files_[level][0]);
     }
   } else if (seek_compaction) {
+    // case2. seek_compaction 选择 sstable
     level = current_->file_to_compact_level_;
     c = new Compaction(options_, level);
     c->inputs_[0].push_back(current_->file_to_compact_);
@@ -1327,15 +1345,22 @@ Compaction* VersionSet::PickCompaction() {
   c->input_version_->Ref();
 
   // Files in level 0 may overlap each other, so pick up all overlapping ones
+  // leveldb 允许 level 0 每个 sstable 重叠, 所以选择所有具有重叠的 sstable.
   if (level == 0) {
+    // step1. 根据前面输入的 sstable, 计算其 key 范围
     InternalKey smallest, largest;
     GetRange(c->inputs_[0], &smallest, &largest);
-    // Note that the next call will discard the file we placed in
-    // c->inputs_[0] earlier and replace it with an overlapping set
-    // which will include the picked file.
+    // step2. 根据其范围, 计算 level 0 和这个 sstable 重叠的 sstable
+    //
+    // 注意，下一次调用将丢弃我们之前放置在c->inputs_[0]中的文件，并将其替换为一个重叠集，
+    // 其中将包含选中的文件。
     current_->GetOverlappingInputs(0, &smallest, &largest, &c->inputs_[0]);
     assert(!c->inputs_[0].empty());
   }
+
+  // 假设 inputs_[0] 是从 level 1 中选择的 sstable [0 - 100]
+  // 假设 level 0 存在 sstable [2 - 100] [15 - 80] [0 - 50] [100 - 300]
+  // inputs_0 将吧Phan [2 - 100] [15 - 80] [0 - 50] [0 - 100]
 
   SetupOtherInputs(c);
 
@@ -1425,41 +1450,67 @@ void VersionSet::SetupOtherInputs(Compaction* c) {
   const int level = c->level();
   InternalKey smallest, largest;
 
+  // step1: pick up SSTables in level-L and denote these files as input0, input0
+  // is not overlapped with other SSTables in level-L.
   AddBoundaryInputs(icmp_, current_->files_[level], &c->inputs_[0]);
+  // step2: get the smallest and the largest keys on input0, denote these keys
+  // as smallest and largest respectively.
   GetRange(c->inputs_[0], &smallest, &largest);
-
+  // step3: get all SSTables in level-L+1 that overlapped with input0, denotes
+  // these files as input1.
   current_->GetOverlappingInputs(level + 1, &smallest, &largest,
                                  &c->inputs_[1]);
   AddBoundaryInputs(icmp_, current_->files_[level + 1], &c->inputs_[1]);
 
   // Get entire range covered by compaction
+
+  // step4: get the smallest and the largest keys of input0 and input1, denote
+  // these keys as all_start and all_limit respectively.
   InternalKey all_start, all_limit;
   GetRange2(c->inputs_[0], c->inputs_[1], &all_start, &all_limit);
 
   // See if we can grow the number of inputs in "level" without
   // changing the number of "level+1" files we pick up.
+
+  // step5: if input1 contains no files,then goto the step13.
   if (!c->inputs_[1].empty()) {
     std::vector<FileMetaData*> expanded0;
+    // step6: get all SSTables in level-L that overlapped with key
+    // range(all_start, all_limit), denotes these files as expand0.
     current_->GetOverlappingInputs(level, &all_start, &all_limit, &expanded0);
     AddBoundaryInputs(icmp_, current_->files_[level], &expanded0);
+    // step7: if the number of files in expand0 is greater than that in input0
+    // and total bytes of expand0 and input1 are less than
+    // kExpandedCompactionByteSizeLimit (default 50MB), then try to grow up
+    // files in level-L, otherwise, go to the step13.
     const int64_t inputs0_size = TotalFileSize(c->inputs_[0]);
     const int64_t inputs1_size = TotalFileSize(c->inputs_[1]);
     const int64_t expanded0_size = TotalFileSize(expanded0);
     if (expanded0.size() > c->inputs_[0].size() &&
         inputs1_size + expanded0_size <
             ExpandedCompactionByteSizeLimit(options_)) {
+      // step8: get the smallest and the largetst keys on expand0. denote these
+      // keys as new_start and new_limit.
       InternalKey new_start, new_limit;
       GetRange(expanded0, &new_start, &new_limit);
       std::vector<FileMetaData*> expanded1;
+
+      // step9: get all SSTables in level-L+1 that overlapped with key
+      // range(new_start, new_limit), denotes these files as expand1.
       current_->GetOverlappingInputs(level + 1, &new_start, &new_limit,
                                      &expanded1);
       AddBoundaryInputs(icmp_, current_->files_[level + 1], &expanded1);
+      // step10: if expand1 has the as many files as input1, then assign
+      // expand0, expand1, new_start and new_limit to input0, input1, smallest
+      // and largest respectively. otherwise goto step13.
       if (expanded1.size() == c->inputs_[1].size()) {
         Log(options_->info_log,
             "Expanding@%d %d+%d (%ld+%ld bytes) to %d+%d (%ld+%ld bytes)\n",
             level, int(c->inputs_[0].size()), int(c->inputs_[1].size()),
             long(inputs0_size), long(inputs1_size), int(expanded0.size()),
             int(expanded1.size()), long(expanded0_size), long(inputs1_size));
+        // step12: update all_start and all_limit to the smallest and the
+        // largest keys of input0 and input1.
         smallest = new_start;
         largest = new_limit;
         c->inputs_[0] = expanded0;
@@ -1471,6 +1522,9 @@ void VersionSet::SetupOtherInputs(Compaction* c) {
 
   // Compute the set of grandparent files that overlap this compaction
   // (parent == level+1; grandparent == level+2)
+
+  // step13: if level-L+2 exists, then get files in level-L+2 that overlapped
+  // with key range(all_start, all_limit), denotes these files as grandparents.
   if (level + 2 < config::kNumLevels) {
     current_->GetOverlappingInputs(level + 2, &all_start, &all_limit,
                                    &c->grandparents_);
@@ -1480,6 +1534,8 @@ void VersionSet::SetupOtherInputs(Compaction* c) {
   // We update this immediately instead of waiting for the VersionEdit
   // to be applied so that if the compaction fails, we will try a different
   // key range next time.
+
+  // step14: update compact_pointer in level-L to largest.
   compact_pointer_[level] = largest.Encode().ToString();
   c->edit_.SetCompactPointer(level, largest);
 }
@@ -1534,6 +1590,11 @@ Compaction::~Compaction() {
     input_version_->Unref();
   }
 }
+
+//  Move the single sstable from level-L to level-L+1 trivially iff
+// input0 contains only one file and input1 contains none and total bytes of
+// overlapped files in level-L+2 are less than
+// kMaxGrandParentOverlapBytes(default 20MB).
 
 bool Compaction::IsTrivialMove() const {
   const VersionSet* vset = input_version_->vset_;

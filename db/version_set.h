@@ -15,12 +15,12 @@
 #ifndef STORAGE_LEVELDB_DB_VERSION_SET_H_
 #define STORAGE_LEVELDB_DB_VERSION_SET_H_
 
+#include "db/dbformat.h"
+#include "db/version_edit.h"
 #include <map>
 #include <set>
 #include <vector>
 
-#include "db/dbformat.h"
-#include "db/version_edit.h"
 #include "port/port.h"
 #include "port/thread_annotations.h"
 
@@ -312,6 +312,9 @@ class VersionSet {
 
   // Per-level key at which the next compaction at that level should start.
   // Either an empty string, or a valid InternalKey.
+
+  // 指向每次合并后的那一层的最大的 key, 下一次合并应该从这里开始. 例如
+  // (merge(l, l+1) -> l+1, compact_pointer_[l] 将更新为 l 合并后的最大的 key.
   std::string compact_pointer_[config::kNumLevels];
 };
 
@@ -363,13 +366,16 @@ class Compaction {
 
   Compaction(const Options* options, int level);
 
+  // 进行 compaction 的 level
   int level_;
+  // 最大文件大小, 默认 2MB
   uint64_t max_output_file_size_;
+  // 当前 version (manifest) 的引用
   Version* input_version_;
   VersionEdit edit_;
-
-  // Each compaction reads inputs from "level_" and "level_+1"
-  std::vector<FileMetaData*> inputs_[2];  // The two sets of inputs
+  // 表示 level 和 level + 1 两个输入集合,
+  // 每次合并都会从"level_"和"level_+1"读取输入
+  std::vector<FileMetaData*> inputs_[2];
 
   // State used to check for number of overlapping grandparent files
   // (parent == level_ + 1, grandparent == level_ + 2)
