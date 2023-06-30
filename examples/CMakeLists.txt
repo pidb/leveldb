@@ -11,7 +11,10 @@ set(LEVELDB_EXAMPLE ${PROJECT_SOURCE_DIR}/examples)
 
 add_executable(exam_01 ${LEVELDB_EXAMPLE}/exam_01.cpp)
 add_executable(exam_02 ${LEVELDB_EXAMPLE}/exam_02.cpp)
+add_executable(compact_l0 ${LEVELDB_EXAMPLE}/compact_l0.cpp)
 
 # 链接 LevelDB 库
 target_link_libraries(exam_01 leveldb)
 target_link_libraries(exam_02 leveldb)
+target_link_libraries(exam_02 leveldb)
+target_link_libraries(compact_l0 leveldb)

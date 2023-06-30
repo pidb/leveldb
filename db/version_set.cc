@@ -546,8 +546,7 @@ void Version::GetOverlappingInputs(int level, const InternalKey* begin,
     } else {
       inputs->push_back(f);
       if (level == 0) {
-        // Level-0 files may overlap each other.  So check if the newly
-        // added file has expanded the range.  If so, restart search.
+        // 0级文件可能相互重叠。所以检查新添加的文件是否扩展了范围。如果是，重新开始搜索。
         if (begin != nullptr && user_cmp->Compare(file_start, user_begin) < 0) {
           user_begin = file_start;
           inputs->clear();
@@ -1347,20 +1346,17 @@ Compaction* VersionSet::PickCompaction() {
   // Files in level 0 may overlap each other, so pick up all overlapping ones
   // leveldb 允许 level 0 每个 sstable 重叠, 所以选择所有具有重叠的 sstable.
   if (level == 0) {
-    // step1. 根据前面输入的 sstable, 计算其 key 范围
+    // step1. 根据前面 level 0 输入的 sstable, 计算其 key 范围
     InternalKey smallest, largest;
     GetRange(c->inputs_[0], &smallest, &largest);
-    // step2. 根据其范围, 计算 level 0 和这个 sstable 重叠的 sstable
+    // step2. 根据其范围, 计算 level 0 其他的 sstable 和这个 sstable 重叠的
+    // sstable
     //
     // 注意，下一次调用将丢弃我们之前放置在c->inputs_[0]中的文件，并将其替换为一个重叠集，
     // 其中将包含选中的文件。
     current_->GetOverlappingInputs(0, &smallest, &largest, &c->inputs_[0]);
     assert(!c->inputs_[0].empty());
   }
-
-  // 假设 inputs_[0] 是从 level 1 中选择的 sstable [0 - 100]
-  // 假设 level 0 存在 sstable [2 - 100] [15 - 80] [0 - 50] [100 - 300]
-  // inputs_0 将吧Phan [2 - 100] [15 - 80] [0 - 50] [0 - 100]
 
   SetupOtherInputs(c);
 

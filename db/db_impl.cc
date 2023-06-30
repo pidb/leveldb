@@ -920,14 +920,6 @@ Status DBImpl::DoCompactionWork(CompactionState* compact) {
     compact->smallest_snapshot = snapshots_.oldest()->sequence_number();
   }
 
-  // make a MergingIterator from input files. create a TwoLevelIterator for each
-  // level-0 file, if any; create a TwoLevelIterator for concatenating all input
-  // files in the same level other than level-0. the former TwoLevelIterator
-  // consists of two Block::Iter instances, the one for the index block, the
-  // other for the data block. the latter TwoLevelIterator consists of one
-  // Version::LevelFileNumIterator instance for walking through file numbers and
-  // one TwoLevelIterator instance for accessing the SSTable specified by an
-  // certain file number.
   Iterator* input = versions_->MakeInputIterator(compact->compaction);
 
   // Release mutex while we're actually doing the compaction work
