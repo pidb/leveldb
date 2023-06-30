@@ -6,6 +6,7 @@
 
 #include "leveldb/comparator.h"
 #include "leveldb/iterator.h"
+
 #include "table/iterator_wrapper.h"
 
 namespace leveldb {
@@ -139,7 +140,9 @@ class MergingIterator : public Iterator {
   // For now we use a simple array since we expect a very small number
   // of children in leveldb.
   const Comparator* comparator_;
+  // children_ 表示多个待合并的迭代器.
   IteratorWrapper* children_;
+  // 指示 children_ 迭代器的数量
   int n_;
   IteratorWrapper* current_;
   Direction direction_;

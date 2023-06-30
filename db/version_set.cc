@@ -1446,6 +1446,15 @@ void VersionSet::SetupOtherInputs(Compaction* c) {
   const int level = c->level();
   InternalKey smallest, largest;
 
+  // AddBoundaryInputs 作用是为了避免出现边界 key 所在的 sstable 没有加入到
+  // compact 输入文件中. 例如:
+  //  level 0 有 [k0 - k39] [k17 - k55] [k48 - k105] [k105 - k141]
+  //  inputs_[0] 将选择 [k0 - k39] [k17 - k55] [k48 - k105]
+  // 这里的边界 sstable 是 [k105 - 141], 没有加入到 inputs_[0].
+  //
+  // 问题: 加入 compact 到 level 1, 当后面 Get(k105) 时, 会返回 level 0 的 k105,
+  // 而不是 level 1.
+
   // step1: pick up SSTables in level-L and denote these files as input0, input0
   // is not overlapped with other SSTables in level-L.
   AddBoundaryInputs(icmp_, current_->files_[level], &c->inputs_[0]);

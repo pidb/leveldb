@@ -379,6 +379,9 @@ class Compaction {
 
   // State used to check for number of overlapping grandparent files
   // (parent == level_ + 1, grandparent == level_ + 2)
+  // 合并的为 level 和 level 1, smallest, largest 是 level 和 level + 1
+  // 最小、最大 key 范围, 该数据成员保存 level + 2 中与 smallest, largest
+  // 重叠的 sstable.
   std::vector<FileMetaData*> grandparents_;
   size_t grandparent_index_;  // Index in grandparent_starts_
   bool seen_key_;             // Some output key has been seen

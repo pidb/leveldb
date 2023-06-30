@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
   }
 
   // 写 ~4MB (41 values, 每个 100k)
-  for (int i = 2; i < 43; i++) {
+  for (int i = 0; i < 40; i++) {
     status =
         db->Put(leveldb::WriteOptions(), Key(i), generateRandomString(100000));
     if (!status.ok()) {
@@ -93,7 +93,7 @@ int main(int argc, char** argv) {
     }
   }
 
-  for (int i = 0; i < 42; i++) {
+  for (int i = 45; i < 84; i++) {
     status =
         db->Put(leveldb::WriteOptions(), Key(i), generateRandomString(100000));
     if (!status.ok()) {
@@ -104,7 +104,7 @@ int main(int argc, char** argv) {
     }
   }
 
-  for (int i = 43; i < 84; i++) {
+  for (int i = 100; i < 142; i++) {
     status =
         db->Put(leveldb::WriteOptions(), Key(i), generateRandomString(100000));
     if (!status.ok()) {
