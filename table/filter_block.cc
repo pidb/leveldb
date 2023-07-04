@@ -5,6 +5,7 @@
 #include "table/filter_block.h"
 
 #include "leveldb/filter_policy.h"
+
 #include "util/coding.h"
 
 namespace leveldb {
@@ -19,8 +20,12 @@ FilterBlockBuilder::FilterBlockBuilder(const FilterPolicy* policy)
     : policy_(policy) {}
 
 void FilterBlockBuilder::StartBlock(uint64_t block_offset) {
+  // 根据 block_offset 计算出当前有多少个 2KB 的data。例如 block_offset 为 2MB,
+  // 那么 filter_index = 2MB/2KB = 10.
   uint64_t filter_index = (block_offset / kFilterBase);
   assert(filter_index >= filter_offsets_.size());
+  // 如果 filter_index 大于 filter 的数量（filter_offsets_[i] 指向第 i 个 filter
+  // data), 就需要为新的 2KB 数据段构建过滤器了。
   while (filter_index > filter_offsets_.size()) {
     GenerateFilter();
   }

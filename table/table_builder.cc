@@ -10,6 +10,7 @@
 #include "leveldb/env.h"
 #include "leveldb/filter_policy.h"
 #include "leveldb/options.h"
+
 #include "table/block_builder.h"
 #include "table/filter_block.h"
 #include "table/format.h"
@@ -38,7 +39,7 @@ struct TableBuilder::Rep {
   Options options;
   Options index_block_options;
   WritableFile* file;
-  uint64_t offset;
+  uint64_t offset;  // 表示 sstable 的段内偏移
   Status status;
   BlockBuilder data_block;
   BlockBuilder index_block;
@@ -116,6 +117,7 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
   r->num_entries++;
   r->data_block.Add(key, value);
 
+  // 当 block size 超过选项配置的大小时需要进行 flush，将输入刷入 sstable。
   const size_t estimated_block_size = r->data_block.CurrentSizeEstimate();
   if (estimated_block_size >= r->options.block_size) {
     Flush();
@@ -134,6 +136,7 @@ void TableBuilder::Flush() {
     r->status = r->file->Flush();
   }
   if (r->filter_block != nullptr) {
+    // 为当前 block 中的数据 keys 构建过滤器
     r->filter_block->StartBlock(r->offset);
   }
 }
@@ -177,17 +180,22 @@ void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
 void TableBuilder::WriteRawBlock(const Slice& block_contents,
                                  CompressionType type, BlockHandle* handle) {
   Rep* r = rep_;
+  // 设置 index block，七张 offset 指向 data block 开始，也就是 offset
+  // 的位置。size 表示 block data 内容的长度（但不包含 trailer）
   handle->set_offset(r->offset);
   handle->set_size(block_contents.size());
   r->status = r->file->Append(block_contents);
   if (r->status.ok()) {
     char trailer[kBlockTrailerSize];
-    trailer[0] = type;
+    trailer[0] = type;  // 压缩类型 (snappy / no)
+    // 计算 32 bit crc
     uint32_t crc = crc32c::Value(block_contents.data(), block_contents.size());
     crc = crc32c::Extend(crc, trailer, 1);  // Extend crc to cover block type
     EncodeFixed32(trailer + 1, crc32c::Mask(crc));
+    // 数据写入磁盘了
     r->status = r->file->Append(Slice(trailer, kBlockTrailerSize));
     if (r->status.ok()) {
+      // 指向新的段内偏移
       r->offset += block_contents.size() + kBlockTrailerSize;
     }
   }
