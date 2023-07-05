@@ -85,9 +85,13 @@ FilterBlockReader::FilterBlockReader(const FilterPolicy* policy,
   size_t n = contents.size();
   if (n < 5) return;  // 1 byte for base_lg_ and 4 for start of offset array
   base_lg_ = contents[n - 1];
+  // 读取 filter_offsets_[N], 所以 last_word 指向 filter_content_[N],
+  // 即过滤器内容最后一个位置
   uint32_t last_word = DecodeFixed32(contents.data() + n - 5);
   if (last_word > n - 5) return;
   data_ = contents.data();
+  // offset_ 指向 filter_offset_[0], 因为 last_word 下一个字节是 filter_offset
+  // 段内容
   offset_ = data_ + last_word;
   num_ = (n - 5 - last_word) / 4;
 }
@@ -95,9 +99,12 @@ FilterBlockReader::FilterBlockReader(const FilterPolicy* policy,
 bool FilterBlockReader::KeyMayMatch(uint64_t block_offset, const Slice& key) {
   uint64_t index = block_offset >> base_lg_;
   if (index < num_) {
+    // 读取 filter_offset_[i]
     uint32_t start = DecodeFixed32(offset_ + index * 4);
+    // 读取 filter_offset_[i+1]
     uint32_t limit = DecodeFixed32(offset_ + index * 4 + 4);
     if (start <= limit && limit <= static_cast<size_t>(offset_ - data_)) {
+      // 根据索引确定 content 内容.
       Slice filter = Slice(data_ + start, limit - start);
       return policy_->KeyMayMatch(key, filter);
     } else if (start == limit) {

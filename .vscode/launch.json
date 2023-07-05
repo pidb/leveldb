@@ -82,6 +82,32 @@
                     "ignoreFailures": true
                 }
             ]
+        },
+        {
+            "name": "Launch compaction level2",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/examples/level2",
+            "args": [
+                "/tmp/level2", // 配置db路径
+            ],
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb", // 如果是 macos, 请替换为 lldb
+            "stopAtEntry": false,
+            "setupCommands": [
+                {
+                    "description": "为 gdb 启用整齐打印",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "将反汇编风格设置为 Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
         }
     ]
 }
